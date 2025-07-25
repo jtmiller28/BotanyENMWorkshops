@@ -1,0 +1,89 @@
+---
+title: "06 Null Models"
+author: "Tyler Radtke & Sebastian Fernandez"
+date: "2025-07-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+### Purpose: 
+- Assess performance of niche models using null models
+
+Load Packages
+```{r message=FALSE}
+library(ENMeval)
+library(ggplot2)
+library(dplyr)
+```
+
+#### Setup
+Load Occurrence Data
+```{r}
+# Load all occurrence records
+alldf <- read.csv("data/02_cleaning/maxent_ready/diapensiaceae_maxentready_2025_06_27.csv")
+```
+Load Optimal Model Info
+```{r}
+# Load optimal feature class (fc) and regularization multiplier (rm)
+opt.seq <- read.delim("data/05_ENMs/Galax_urceolata_OptModel.txt")
+
+# Extract parameters
+fc <- opt.seq$fc
+rm <- opt.seq$rm
+```
+Load ENMeval Object
+```{r}
+# Load saved ENMeval object for Galax urceolata
+load("data/05_ENMs/Galax_urceolata_ENM_eval.RData")
+```
+
+#### Run NULL Model Simulations
+
+```{r}
+# Run ENMnulls with optimal parameters and 100 iterations
+spec.mod.null <- ENMnulls(
+  eval,
+  mod.settings = list(fc = fc, rm = rm),
+  no.iter = 100
+)
+```
+
+#### Save Null Model Comparison Results
+
+```{r}
+# Extract comparison results between empirical and null models
+null_comparison_results <- null.emp.results(spec.mod.null)
+
+# Save results as CSV
+write.csv(
+  null_comparison_results,
+  file = "data/05_ENMs/Galax_urceolata_null_comparison_results.csv",
+  row.names = FALSE
+)
+```
+
+#### Plot Null Model Results
+```{r}
+# Generate histogram plots for AUC and OR.10p statistics
+spec.null <- evalplot.nulls(
+  spec.mod.null,
+  stats = c("or.10p", "auc.val"),
+  plot.type = "histogram"
+)
+
+# Display plot in R console
+plot(spec.null)
+
+# Save plot to PNG
+ggsave(
+  filename = "Galax_urceolata_null_histogram.png",
+  plot = spec.null,
+  path = "data/05_ENMs/",
+  height = 12,
+  width = 13
+)
+```
+
+

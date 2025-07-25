@@ -1,0 +1,98 @@
+---
+title: "01 Data Downloads"
+output: html_document
+author: ML Gaynor
+date: "2025-07-21"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Purpose: 
+- Download and preview species occurrence records using iDigBio and gatoRs
+
+Load Required Packages
+```{r}
+library(ridigbio)     # Interface to iDigBio API
+library(gatoRs)       # Unified taxonomic/occurrence tools
+library(leaflet)      # Interactive mapping
+```
+
+#### Retrieving data from iDigBio using ridigbio
+Search the iDigBio API for occurrence record by taxonomic designations
+```{r}
+# Search for specific species (Galax urceolata)
+iDigBio_GU <- idig_search_records(rq = list(scientificname = "Galax urceolata"))
+# Search for all Diapensiaceae occurrences (limit to 1000 for example)
+iDigBio_GU_family <- idig_search_records(rq = list(family = "Diapensiaceae"), limit = 1000)
+```
+Search the API with a geographic bounding box (e.g. Eastern USA extent)
+```{r}
+# format a request in the structure of a list
+rq_input <- list(
+  scientificname = list(type = "exists"),
+  family = "Diapensiaceae",
+  geopoint = list(
+    type = "geo_bounding_box",
+    top_left = list(lon = -98.16, lat = 48.92),
+    bottom_right = list(lon = -64.02, lat = 23.06)
+  )
+)
+# input request into idigbio search fxn
+iDigBio_GU_family_USA <- idig_search_records(rq_input, limit = 1000)
+```
+
+Save results as a Comma Separated File (.csv)
+```{r}
+write.csv(iDigBio_GU, "data/01_download/iDigBio_GU_2025_06_27.csv", row.names = FALSE)
+write.csv(iDigBio_GU_family, "data/01_download/iDigBio_GU_family_2025_06_27.csv", row.names = FALSE)
+```
+
+#### Retrieving Data from iDigBio and GBIF using gatoRs
+Create a synonym vector for species to search by. 
+```{r}
+Shortia_galacifolia <- c("Shortia galacifolia", "Sherwoodia galacifolia")
+Galax_urceolata <- c("Galax urceolata", "Galax aphylla")
+Pyxidanthera_barbulata <- c("Pyxidanthera barbulata", "Pyxidanthera barbulata var. barbulata")
+Pyxidanthera_brevifolia <- c("Pyxidanthera brevifolia", "Pyxidanthera barbulata var. brevifolia")
+
+```
+Use gatoRs to download records species occurrence data for each name vector. Allows us to retrieve all versions of a name as taxonomy has been updated. 
+```{r eval=FALSE, include=TRUE}
+gators_download(synonyms.list = Shortia_galacifolia,
+                write.file = TRUE,
+                filename = "./data/01_download/raw/Shortia_galacifolia_raw_2025_06_27.csv")
+
+gators_download(synonyms.list = Galax_urceolata,
+                write.file = TRUE,
+                filename = "./data/01_download/raw/Galax_urceolata_raw_2025_06_27.csv")
+
+gators_download(synonyms.list = Pyxidanthera_barbulata,
+                write.file = TRUE,
+                filename = "./data/01_download/raw/Pyxidanthera_barbulata_raw_2025_06_27.csv")
+
+gators_download(synonyms.list = Pyxidanthera_brevifolia,
+                write.file = TRUE,
+                filename = "./data/01_download/raw/Pyxidanthera_brevifolia_raw_2025_06_27.csv")
+
+```
+
+#### Preview a sample species's occurrence data
+Read in Shortia galacifolia's data we downloaded with gatoRs above
+```{r}
+rawdf <- read.csv("data/01_download/raw/Shortia_galacifolia_raw_2025_06_27.csv")
+```
+View number of columns/fields in the dataset, also return the number of rows (individual occurrence records)
+```{r}
+names(rawdf) # returns field headers
+nrow(rawdf) # returns the number of rows = occurrence records
+```
+
+Use Leaflet to visualize records interactively - The error message here indicates many points do not have long/lat values 
+```{r}
+leaflet(rawdf) %>% 
+  addTiles() %>% 
+  addMarkers(label = paste0(rawdf$longitude, ", ", rawdf$latitude))
+```
+

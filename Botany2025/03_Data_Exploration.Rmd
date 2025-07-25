@@ -1,0 +1,188 @@
+---
+title: "03 Data Exploration"
+output: html_document
+date: "2025-07-25"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Purpose: 
+- Analyze climatic variables associated with species occurrences using PCA and ANOVA.
+- plot top contributors to PC1 and PC2.
+
+Load Packages
+```{r message=FALSE}
+library(gtools)         # For mixedsort of file names
+library(terra)          # For raster and spatial extraction
+library(dplyr)          # For data wrangling
+library(tidyr)          # For handling NAs and reshaping
+library(ggplot2)        # For plotting
+library(ggbiplot)       # For PCA biplot visualization
+library(multcompView)   # For compact letter display (Tukey HSD)
+library(gridExtra)      # For combining plots
+```
+
+#### Load in Cleaned Occurrence Data
+```{r}
+# Read in cleaned occurrence data with geographic coordinates and species ID
+alldf <- read.csv("data/02_cleaning/maxent_ready/diapensiaceae_maxentready_2025_06_27.csv")
+```
+
+#### Load in and stack bioclim layers
+Raster files provided by WorldClim 
+```{r}
+# List and sort all .tif files in the WorldClim directory
+list <- list.files("data/04_climate_processing/BioClim/", full.names = TRUE)
+list <- gtools::mixedsort(sort(list))
+
+# Stack the raster files
+envtStack <- terra::rast(list)
+```
+
+#### Extract Climatic Variables at Occurrence Points
+
+Extract climatic variable from raster cell where occurrence pts sit 
+```{r}
+# Extract values of environmental rasters at occurrence points
+ptExtracted <- terra::extract(envtStack, alldf[, c("longitude", "latitude")])
+```
+
+Organize these data to have species information
+```{r}
+# Combine with species names and coordinates
+ptExtracteddf <- ptExtracted %>%
+  dplyr::mutate(name = as.character(alldf$accepted_name), 
+                x = alldf$longitude, 
+                y = alldf$latitude)
+
+```
+
+Drop any points that does not contain climatic data
+```{r}
+# Remove any rows with missing climate values
+ptExtracteddf <- ptExtracteddf %>% tidyr::drop_na()
+```
+
+#### Perform PCA on Climatic Variables
+Subset the climatic variables, assumed to be columns 2 to 21
+```{r}
+data.bioclim <- ptExtracteddf[, 2:21]
+data.species <- ptExtracteddf[, "name"]
+```
+
+Scale and run a Principal Component Analysis (PCA) on climatic variables. A PCA reduces the dimensionality of the climatic data to make it easier to identify broad patterns and which variables are most influential. For our data, it shows how species cluster & differentiate according to the climatic variables associated with their spatial presence. <br>
+
+When you use the command prcomp your loading variables show up as rotational variables. 
+```{r}
+pca_result <- prcomp(data.bioclim, scale. = TRUE)
+```
+
+Extract variable loadings: saving a matrix of ceofficients (called loadings) for each of the original climatic variable on each PC (principal component). These loadings show how much each original variable contributes to each PC. Variables with larger (pos or neg) loadings are the biggest drivers of variation in the data. 
+```{r}
+loadings <- pca_result$rotation
+```
+Calculate relative contributions of each variable to each PC
+```{r}
+loadings_relative <- sweep(abs(loadings), 2, colSums(abs(loadings)), "/") * 100
+```
+#### Visualize the PCA
+Set up a nice custom theme for plotting aesthetics 
+```{r}
+# Customize theme
+custom_theme <- theme(
+  panel.background = element_blank(),
+  panel.border = element_rect(fill = NA),
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  strip.background = element_blank(),
+  axis.ticks = element_line(colour = "black"),
+  plot.margin = unit(c(1, 1, 1, 1), "line"),
+  axis.text = element_text(size = 12),
+  legend.text = element_text(size = 12),
+  legend.title = element_text(size = 12),
+  text = element_text(size = 12)
+)
+# Define color palette for species
+pal <- c("#D43F3AFF", "#EEA236FF", "#5CB85CFF", "#46B8DAFF")
+
+```
+Create a species biplot. obs.scale indicates the scale factor to apply to observation, var.sacle indicates the scale factor to apply to variables, ellipse as TRUE draws a normal data ellipse for each group, and circle as TRUE draws a correlation circle. <br>
+
+This is all basically to show how our data clusters across the top 2 PCs per species!
+```{r}
+# PCA Biplot
+pca_plot <- ggbiplot(pca_result, obs.scale = 1, var.scale = 1,
+                     groups = data.species, ellipse = TRUE, circle = TRUE) +
+  scale_color_manual(name = '', values = pal) +
+  theme(legend.direction = 'vertical', legend.position = 'bottom',
+        legend.text = element_text(size = 12, face = "italic")) +
+  custom_theme
+
+print(pca_plot)
+```
+
+#### Identify the top contributors to PC1 and PC2
+Pull out the bioclim layers that comprise PC1 and PC2
+```{r}
+# Top 2 contributing variables to PC1 and PC2
+top_PC1_vars <- rownames(loadings)[order(abs(loadings[, "PC1"]), decreasing = TRUE)][1:2]
+top_PC2_vars <- rownames(loadings)[order(abs(loadings[, "PC2"]), decreasing = TRUE)][1:2]
+selected_vars <- unique(c(top_PC1_vars, top_PC2_vars))  # remove duplicates
+```
+
+#### ANOVA + Tukey HSD + Plotting for Top Variables
+We can run an ANOVA (Analysis of Variance) and a Tukey HSD (a comparison test) Post-hoc to test whether there are statistically significant differences in the average values of specific climatic variables between the species. <br> 
+
+Broken down, the ANOVA evaluates the difference of the mean value for a climatic variable across all species, and tests for a significant difference. <br>
+
+The Tukey HSD test follows up comparing all pairs of species to see which species pairs differ from eachother. <br>
+
+Here, we'll use a for-loop to move through each extracted (via species occurrence points) bioclim layer for PC1 & PC2 and conduct the ANOVA and Tukey HSD. Plotted as a boxplot with real data to show relative density.  
+```{r}
+## ANOVA + Tukey HSD + Plotting for Top Variables ----
+
+plotlist <- list()
+
+for (i in seq_along(selected_vars)) {
+  varname <- selected_vars[i]
+  
+  # Run ANOVA
+  model <- aov(as.formula(paste0(varname, " ~ name")), data = ptExtracteddf)
+  tukey <- TukeyHSD(model)
+  pvals <- tukey$`name`[, 4]
+  
+  # Convert p-values to significance letters
+  letters_out <- multcompLetters(pvals)
+  groups_df <- data.frame(
+    name = names(letters_out$Letters),
+    groups = letters_out$Letters
+  )
+  
+  # Set y position for labels
+  max_y <- max(ptExtracteddf[[varname]], na.rm = TRUE)
+  groups_df$y_position <- max_y * 1.1
+  
+  # Create plot
+  plotlist[[i]] <- ggplot(ptExtracteddf, aes(x = name, y = .data[[varname]])) +
+    geom_jitter(aes(color = name), width = 0.3, alpha = 0.5, size = 1) +
+    geom_boxplot(fill = NA, color = "black", size = 0.6) +
+    geom_text(data = groups_df,
+              aes(x = name, y = y_position, label = groups),
+              inherit.aes = FALSE, size = 4) +
+    scale_fill_manual(values = pal) +
+    scale_color_manual(values = pal) +
+    ggtitle(paste0(varname)) +
+    ylab(varname) +
+    theme_classic() +
+    theme(legend.position = "none", 
+          axis.text.x = element_text(angle = 45, hjust = 1, face = "italic")) +
+    ylim(0, max_y * 1.3)
+}
+
+# Combine plots
+gridExtra::grid.arrange(grobs = plotlist, ncol = 2)
+
+```
+
